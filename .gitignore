@@ -1,0 +1,35 @@
+# Binaries
+/gitscan
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test / coverage artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+coverage.*
+
+# Go workspace
+go.work
+go.work.sum
+
+# Go build cache (per-user, but keep out of repo just in case)
+# vendor/  # uncomment to vendor dependencies
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Engineering memory workspace (independent git repo)
+.development/
