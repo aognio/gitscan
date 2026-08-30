@@ -12,7 +12,7 @@ built-in domain aliases (`github → github.com`, `gitlab → gitlab.com`) lets
 ## Install
 
 ```sh
-go install github.com/aognio/gitscan@latest
+go install github.com/aognio/gitscan/cmd/gitscan@latest
 ```
 
 Or build from source:
@@ -20,12 +20,31 @@ Or build from source:
 ```sh
 git clone https://github.com/aognio/gitscan.git
 cd gitscan
-go build -o gitscan .
-./gitscan --help
+make build
 ```
 
 `gitscan` shells out to the real `git` binary for plumbing stats, so Git must
 be on your `PATH` (it almost certainly already is).
+
+Check the installed version:
+
+```sh
+gitscan --version
+```
+
+### As a Go package
+
+The internal packages are importable as a library:
+
+```go
+import (
+    "github.com/aognio/gitscan/internal/alias"
+    "github.com/aognio/gitscan/internal/config"
+    "github.com/aognio/gitscan/internal/scan"
+)
+```
+
+`go get github.com/aognio/gitscan` adds the module to your `go.mod`.
 
 ---
 
@@ -39,23 +58,32 @@ gitscan root add ~/work --depth 4
 # List configured roots
 gitscan root list
 
-# Scan all configured roots (live TUI when stdout is a TTY)
+# Scan all configured roots (bare gitscan just scans — TUI when stdout is a TTY)
+gitscan
+
+# Scan a path ad-hoc (one-off; does not register it as a root)
+gitscan ~/code
+
+# Scan multiple paths at once
+gitscan ~/code ~/work
+
+# Same thing, made explicit
 gitscan scan
 
 # Only github.com repos, full plumbing stats, JSON output for scripting
-gitscan scan --domain github --full-stats --format json
+gitscan --domain github --full-stats --format json
 
 # Find repos with uncommitted changes
-gitscan scan --dirty-only
+gitscan --dirty-only
 
 # Find repos with no commit in the last 30 days
-gitscan scan --stale 30
+gitscan --stale 30
 
 # Find orphaned local repos with no origin
-gitscan scan --no-remote
+gitscan --no-remote
 
 # Scan a root ad-hoc, ignoring configured roots
-gitscan scan --root ~/code
+gitscan ~/code
 
 # Show merged domain aliases (built-in + user)
 gitscan alias list
@@ -71,38 +99,47 @@ The default scan reads only the filesystem — it parses `.git/config` for
 remotes and walks `.git/` for size. No `git` binary is spawned, so it's fast
 even across hundreds of repos.
 
+When stdout is a TTY, the table is rendered through **Glamour** with Unicode
+borders, aligned columns, and syntax highlighting. When piped, the raw
+markdown table is emitted (readable in any plaintext context — logs, PRs,
+devnotes):
+
 ```text
-$ gitscan scan --plain --root ~/code
-PATH                       HOST       ORIGIN                           BR  CM  OBJ  GIT-SIZE  STATE
-.../code/gitscan                         0   0   0    25.6KB   no-remote
-.../code/interdim           gitea.com  gitea.com/gnrfan/interdim         0   0   0    95.6KB   ok
-.../code/mmvault            gitea.com  gitea.com/gnrfan/mmvault          0   0   0    48.4KB   ok
-.../code/kangoo             github.com git@github.com:aognio/kangoo      0   0   0    444.0KB  ok
-.../code/consolehub        github.com git@github.com:aognio/consolehub  0   0   0    18.2MB   ok
-.../code/webcrush           gitea.com  gitea.com/webcrush                 0   0   0    38.1MB   ok
+$ gitscan --plain ~/code
+| # | Path | Host | Origin | .git size | State |
+|---:|---|---|---|---:|---|
+| 1 | .../code/gitscan |  | — | 25.6KB | no-remote |
+| 2 | .../code/interdim | gitea.com | gitea.com/gnrfan/interdim | 95.6KB | ok |
+| 3 | .../code/mmvault | gitea.com | gitea.com/gnrfan/mmvault | 48.4KB | ok |
+| 4 | .../code/kangoo | github.com | github.com/aognio/kangoo | 444.0KB | ok |
+| 5 | .../code/consolehub | github.com | github.com/aognio/consolehub | 18.2MB | ok |
+| 6 | .../code/webcrush | gitea.com | gitea.com/webcrush | 38.1MB | ok |
 
-6 repos
+**Total: 6 repos**
+
+6 repos | 6 clean | 0 dirty | 1 no-remote
 ```
-
-Columns: **BR** = branches, **CM** = commits, **OBJ** = loose objects.
-These are zero in fast mode — they populate with `--full-stats`.
 
 ### Full stats (plumbing)
 
 Pass `--full-stats` to shell out to `git` for branch/commit/object counts,
-porcelain status, and last commit time. Use `--dirty-only` to surface only
-repos with uncommitted work:
+porcelain status, and last commit time. The table expands to include the
+plumbing columns. Use `--dirty-only` to surface only repos with uncommitted
+work:
 
 ```text
-$ gitscan scan --plain --root ~/code --full-stats --dirty-only
-PATH                       HOST       ORIGIN                          BR  CM   OBJ  GIT-SIZE  STATE
-.../code/gitscan                         0   0    0    25.6KB   dirty(8)
-.../code/mmvault            gitea.com  gitea.com/gnrfan/mmvault         1   1    36   48.4KB   dirty(14)
-.../code/fsasap-mcp                      1   11   152  235.3KB  dirty(3)
-.../code/studyn                          0   0    0    25.6KB   dirty(13)
-.../code/telerep            github.com git@github.com:user/telerep     2   176  795  8.1MB    dirty(1)
+$ gitscan --plain ~/code --full-stats --dirty-only
+| # | Path | Host | Origin | Branches | Commits | Objects | .git size | State |
+|---:|---|---|---|---:|---:|---:|---:|---|
+| 1 | .../code/gitscan |  | — | 0 | 0 | 0 | 25.6KB | dirty(8) |
+| 2 | .../code/mmvault | gitea.com | gitea.com/gnrfan/mmvault | 1 | 1 | 36 | 48.4KB | dirty(14) |
+| 3 | .../code/fsasap-mcp |  | — | 1 | 11 | 152 | 235.3KB | dirty(3) |
+| 4 | .../code/studyn |  | — | 0 | 0 | 0 | 25.6KB | dirty(13) |
+| 5 | .../code/telerep | github.com | github.com/user/telerep | 2 | 176 | 795 | 8.1MB | dirty(1) |
 
-5 repos
+**Total: 5 repos**
+
+5 repos | 0 clean | 5 dirty | 2 no-remote
 ```
 
 The number in `dirty(N)` is the count of uncommitted file entries from
@@ -115,13 +152,16 @@ matches any repo whose origin is on `github.com` (regardless of protocol —
 SSH, HTTPS, or `git@` URLs all collapse to the same host):
 
 ```text
-$ gitscan scan --plain --root ~/code --domain github
-PATH                       HOST       ORIGIN                           BR  CM  OBJ  GIT-SIZE  STATE
-.../code/kangoo             github.com git@github.com:aognio/kangoo      0   0   0    444.0KB  ok
-.../code/consolehub        github.com git@github.com:aognio/consolehub  0   0   0    18.2MB   ok
-.../code/telerep            github.com git@github.com:user/telerep      0   0   0    8.1MB    ok
+$ gitscan --plain ~/code --domain github
+| # | Path | Host | Origin | .git size | State |
+|---:|---|---|---|---:|---|
+| 1 | .../code/kangoo | github.com | github.com/aognio/kangoo | 444.0KB | ok |
+| 2 | .../code/consolehub | github.com | github.com/aognio/consolehub | 18.2MB | ok |
+| 3 | .../code/telerep | github.com | github.com/user/telerep | 8.1MB | ok |
 
-3 repos
+**Total: 3 repos**
+
+3 repos | 3 clean | 0 dirty | 0 no-remote
 ```
 
 Use `--exclude-domain` to drop hosts, and `--protocol ssh|https` to slice
@@ -130,7 +170,7 @@ further by transport.
 ### JSON output (for scripting)
 
 ```sh
-$ gitscan scan --plain --root ~/code --format json | jq '.[] | select(.dirty) | .path'
+$ gitscan --plain ~/code --format json | jq '.[] | select(.dirty) | .path'
 "/home/user/code/gitscan"
 "/home/user/code/mmvault"
 "/home/user/code/fsasap-mcp"
@@ -160,7 +200,7 @@ Each element is a full `Stat` object:
 ### CSV output
 
 ```text
-$ gitscan scan --plain --root ~/code --format csv
+$ gitscan --plain ~/code --format csv
 path,host,origin_url,branches,commits,objects,dotgit_size,dotgit_files,dirty,dirty_count,last_commit
 /home/user/code/gitscan,,,0,0,0,26246,18,false,0,0001-01-01
 /home/user/code/interdim,gitea.com,https://gitea.com/gnrfan/interdim.git,0,0,0,97913,28,false,0,0001-01-01
@@ -171,11 +211,13 @@ total,13
 
 ### Markdown output
 
-Renders as a GitHub-flavored markdown table — handy for pasting into issues,
-notes, or `.development/` artifacts:
+`--format markdown` emits a raw markdown table (no Glamour rendering) — handy
+for pasting into issues, notes, or `.development/` artifacts. The default
+`--format table` also produces a markdown table, but renders it through
+Glamour when stdout is a TTY for a richer visual experience:
 
 ```text
-$ gitscan scan --plain --root ~/code --format markdown
+$ gitscan --plain ~/code --format markdown
 | Path | Host | Origin | Branches | Commits | Objects | .git size | State |
 |---|---|---|---:|---:|---:|---:|---|
 | /home/user/code/interdim | gitea.com | gitea.com/gnrfan/interdim | 0 | 0 | 0 | 95.6KB | ok |
@@ -188,7 +230,8 @@ $ gitscan scan --plain --root ~/code --format markdown
 
 When stdout is a terminal, `gitscan scan` opens a Bubble Tea live view with a
 spinner, running repo count, and streaming rows as the worker pool churns
-through repos:
+through repos. The live view uses the terminal's current dimensions and adapts
+when the terminal is resized:
 
 ```text
 ⠹ scanning... 6 repos found
@@ -204,14 +247,26 @@ Press `q` to cancel the scan and exit. Pipe or redirect stdout and gitscan
 falls back to the static table automatically — use `--plain` to force static
 output in a TTY, or `--watch` to force the live view even when piped.
 
+Use `--browse` to open the completed results in a full-screen browser. It
+supports row selection, vertical paging, horizontal scrolling, and a detail
+area showing the complete path and origin URL:
+
+```text
+$ gitscan --browse ~/code
+```
+
+Use the arrow keys (or `h`/`j`/`k`/`l`) to navigate, `PageUp`/`PageDown` to
+move by a screen, and `q` to leave the browser. `--browse` is available only
+with the table format.
+
 ### Find stale repos
 
 `--stale N` keeps only repos with no commit in the last N days. It relies on
-the last-commit timestamp, so it auto-enables the plumbing path:
+the last-commit timestamp, so pass `--full-stats` to populate it:
 
 ```sh
 # Repos untouched in the last 90 days
-gitscan scan --stale 90
+gitscan --full-stats --stale 90
 ```
 
 ### Find orphaned repos
@@ -220,13 +275,16 @@ gitscan scan --stale 90
 local-only work that was never pushed anywhere:
 
 ```text
-$ gitscan scan --plain --root ~/code --no-remote
-PATH                       HOST  ORIGIN  BR  CM  OBJ  GIT-SIZE  STATE
-.../code/gitscan                         0   0   0    25.6KB   no-remote
-.../code/quickproxy                       0   0   0    5.8MB    no-remote
-.../code/studyn                           0   0   0    25.6KB   no-remote
+$ gitscan --plain ~/code --no-remote
+| # | Path | Host | Origin | .git size | State |
+|---:|---|---|---|---:|---|
+| 1 | .../code/gitscan |  | — | 25.6KB | no-remote |
+| 2 | .../code/quickproxy |  | — | 5.8MB | no-remote |
+| 3 | .../code/studyn |  | — | 25.6KB | no-remote |
 
-3 repos
+**Total: 3 repos**
+
+3 repos | 3 clean | 0 dirty | 3 no-remote
 ```
 
 ### Root management
@@ -357,7 +415,8 @@ config file exists** — the tool works out of the box after `go install`.
 
 | Command | Description |
 |---|---|
-| `gitscan scan` | Discover repos and collect stats |
+| `gitscan` | Scan all configured roots (default) |
+| `gitscan scan` | Same as bare `gitscan` (explicit form) |
 | `gitscan root add <path> [--depth N]` | Add a scan root |
 | `gitscan root remove <path>` | Remove a scan root |
 | `gitscan root list` | List configured roots |
@@ -366,6 +425,7 @@ config file exists** — the tool works out of the box after `go install`.
 | `gitscan config show` | Show current configuration |
 | `gitscan config set <key> <value>` | Set a config value |
 | `gitscan completion <shell>` | Generate shell completion |
+| `gitscan --version` | Show version |
 
 ## Scan flags
 
@@ -380,7 +440,9 @@ config file exists** — the tool works out of the box after `go install`.
 | `--full-stats` | Collect git plumbing stats (slower) |
 | `--format/-f <fmt>` | `table` (default), `json`, `csv`, `markdown` |
 | `--plain` | Force static output (no TUI) |
+| `--raw` | Emit raw markdown table (no Glamour rendering) |
 | `--watch` | Force live TUI even when piped |
+| `--browse` | Browse completed table results interactively |
 | `--concurrency/-j <N>` | Worker pool size |
 | `--root <path>` | Scan this root (repeatable; overrides config) |
 
@@ -400,6 +462,14 @@ Concurrency uses a bounded worker pool (errgroup-style), capped around
 `runtime.NumCPU()` since these are I/O-bound git subprocess calls. Results
 stream over a channel into either the Bubble Tea TUI (when stdout is a TTY)
 or a static renderer (table/JSON/CSV/markdown).
+
+### Table rendering
+
+The `table` format (default) builds a markdown table from the scan results
+and renders it through **Glamour** (glow-style: Unicode borders, aligned
+columns, syntax highlighting) when stdout is a TTY. Use `--raw` to force raw
+markdown output even on a TTY — handy for piping into other tools or pasting
+into notes. `--format markdown` always emits raw markdown (no Glamour).
 
 ### Module layout
 
