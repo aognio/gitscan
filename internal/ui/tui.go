@@ -206,7 +206,7 @@ func (m *tuiModel) normalizeViewport() {
 }
 
 func (m *tuiModel) browserVisibleRows() int {
-	visible := m.height - 8
+	visible := m.height - 5
 	if visible < 1 {
 		visible = 1
 	}
