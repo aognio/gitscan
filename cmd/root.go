@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/aognio/gitscan/internal/alias"
@@ -16,17 +17,51 @@ import (
 	"golang.org/x/term"
 )
 
-// New returns the root gitscan command.
+// expandUser resolves a leading ~ to the user's home directory.
+func expandUser(p string) (string, error) {
+	if p == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return home, nil
+	}
+	if strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, p[2:]), nil
+	}
+	return p, nil
+}
+
+// New returns the root gitscan command. Running `gitscan` with no subcommand
+// is equivalent to `gitscan scan` — it scans all configured roots with the
+// default options. All scan flags are persistent flags on the root command,
+// so `gitscan --plain --domain github` works just like
+// `gitscan scan --plain --domain github`.
 func New() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "gitscan",
+		Use:   "gitscan [path...]",
 		Short: "Scan local filesystem for Git repos and collect stats",
 		Long: "gitscan discovers Git repositories under configured roots, " +
 			"extracts remotes, and collects per-repo stats concurrently. " +
 			"Config: $HOME/.gitscan/gitscan.toml (usable with zero config " +
-			"thanks to built-in domain aliases).",
+			"thanks to built-in domain aliases).\n\n" +
+			"Run `gitscan` with no arguments to scan all configured roots. " +
+			"Run `gitscan ~/code` to scan a path ad-hoc (not persisted). " +
+			"Use `gitscan root add <path>` to register a root first.",
+		Version:      Version,
 		SilenceUsage: true,
+		Args:         cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runScan(cmd, args)
+		},
 	}
+	root.SetVersionTemplate("gitscan {{.Version}}\n")
+
+	addScanFlags(root)
 	root.AddCommand(
 		newScanCmd(),
 		newRootCmd(),
@@ -34,115 +69,182 @@ func New() *cobra.Command {
 		newConfigCmd(),
 		newCompletionCmd(),
 	)
+	if f := root.Flags().Lookup("version"); f != nil {
+		f.Shorthand = "v"
+	}
 	return root
+}
+
+// scanFlags holds the scan-related flag values. Shared by the root command
+// (bare `gitscan`) and the `scan` subcommand.
+type scanFlags struct {
+	domains      []string
+	excludeHosts []string
+	dirtyOnly    bool
+	noRemote     bool
+	protocol     string
+	staleDays    int
+	fullStats    bool
+	format       string
+	plain        bool
+	raw          bool
+	watch        bool
+	browse       bool
+	concurrency  int
+	roots        []string
+}
+
+// addScanFlags registers the scan flags as persistent flags on cmd so they
+// are honored by both `gitscan` (bare) and `gitscan scan`.
+func addScanFlags(cmd *cobra.Command) {
+	pf := cmd.PersistentFlags()
+	pf.StringSliceVarP(&shared.domains, "domain", "d", nil,
+		"filter by domain alias or host (comma-separated, repeatable)")
+	pf.StringSliceVar(&shared.excludeHosts, "exclude-domain", nil,
+		"exclude domains by alias or host")
+	pf.BoolVar(&shared.dirtyOnly, "dirty-only", false, "show only repos with uncommitted changes")
+	pf.BoolVar(&shared.noRemote, "no-remote", false, "show only repos with no configured origin")
+	pf.StringVar(&shared.protocol, "protocol", "", "filter by remote protocol (ssh|https)")
+	pf.IntVar(&shared.staleDays, "stale", 0, "show only repos with no commit in the last N days")
+	pf.BoolVar(&shared.fullStats, "full-stats", false, "collect git plumbing stats (slower)")
+	pf.StringVarP(&shared.format, "format", "f", "", "output format: table|json|csv|markdown (default table)")
+	pf.BoolVar(&shared.plain, "plain", false, "force static output (no TUI)")
+	pf.BoolVar(&shared.raw, "raw", false, "emit raw markdown table (no Glamour rendering)")
+	pf.BoolVar(&shared.watch, "watch", false, "force live TUI output even when piped")
+	pf.BoolVar(&shared.browse, "browse", false, "browse scan results interactively after completion")
+	pf.IntVarP(&shared.concurrency, "concurrency", "j", 0, "worker pool size (default from config)")
+	pf.StringSliceVar(&shared.roots, "root", nil, "scan this root (repeatable; overrides config roots)")
+}
+
+// shared is the singleton holding the parsed scan flag values.
+var shared scanFlags
+
+// runScan is the implementation of both `gitscan` and `gitscan scan`.
+// Positional args (e.g. `gitscan ~/code`) are ad-hoc roots scanned as a
+// one-off — they bypass configured roots and are never persisted. --root
+// does the same; the two are additive.
+func runScan(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	merged := alias.Merge(cfg.Aliases)
+	domains := shared.domains
+	if len(domains) > 0 {
+		domains = merged.ResolveMany(domains)
+	}
+	excludeHosts := shared.excludeHosts
+	if len(excludeHosts) > 0 {
+		excludeHosts = merged.ResolveMany(excludeHosts)
+	}
+	concurrency := shared.concurrency
+	if concurrency <= 0 {
+		concurrency = cfg.Scan.Concurrency
+	}
+
+	var rootsOpt []config.Root
+	adHoc := append([]string{}, args...)
+	adHoc = append(adHoc, shared.roots...)
+	if len(adHoc) > 0 {
+		for _, r := range adHoc {
+			expanded, err := expandUser(r)
+			if err != nil {
+				return err
+			}
+			abs, err := filepath.Abs(expanded)
+			if err != nil {
+				return err
+			}
+			rootsOpt = append(rootsOpt, config.Root{Path: abs, Depth: config.DefaultDepth})
+		}
+	} else {
+		rootsOpt = cfg.Roots
+	}
+	if len(rootsOpt) == 0 {
+		return fmt.Errorf("no roots configured — run `gitscan root add <path>` or pass a path argument, e.g. `gitscan ~/code`")
+	}
+
+	opts := scan.Options{
+		Roots:       rootsOpt,
+		Exclude:     cfg.Scan.ExcludePatterns,
+		Concurrency: concurrency,
+		FullStats:   shared.fullStats,
+		Aliases:     merged,
+		Filter: scan.Filter{
+			Domains:      domains,
+			ExcludeHosts: excludeHosts,
+			DirtyOnly:    shared.dirtyOnly,
+			NoRemote:     shared.noRemote,
+			Protocol:     shared.protocol,
+			StaleDays:    shared.staleDays,
+		},
+	}
+
+	ctx := context.Background()
+	results, cancel := scan.Run(ctx, opts)
+	defer cancel()
+
+	f := ui.Format(shared.format)
+	if f == "" {
+		f = ui.FormatTable
+	}
+	tty := term.IsTerminal(int(os.Stdout.Fd()))
+	useGlamour := !shared.raw && tty
+	live := !shared.plain && (shared.watch || (tty && f == ui.FormatTable))
+	if shared.browse && f != ui.FormatTable {
+		return fmt.Errorf("--browse requires --format table")
+	}
+	if shared.browse {
+		live = true
+	}
+
+	if f == ui.FormatJSON || f == ui.FormatCSV || f == ui.FormatMarkdown {
+		live = false
+	}
+
+	renderFinal := func(rows []scan.Result) {
+		var r ui.Renderer
+		if f == ui.FormatTable {
+			if shared.fullStats {
+				r = ui.NewFullStatsTable(useGlamour)
+			} else {
+				r = ui.New(f, useGlamour)
+			}
+		} else {
+			r = ui.New(f, useGlamour)
+		}
+		r.Header(os.Stdout)
+		for _, res := range rows {
+			r.Row(os.Stdout, res)
+		}
+		r.Footer(os.Stdout, len(rows))
+	}
+
+	if live {
+		rows, err := ui.RunTUI(results, cancel)
+		if err != nil {
+			return err
+		}
+		renderFinal(rows)
+		return nil
+	}
+
+	var rows []scan.Result
+	for res := range results {
+		rows = append(rows, res)
+	}
+	renderFinal(rows)
+	return nil
 }
 
 // ---------- scan ----------
 
 func newScanCmd() *cobra.Command {
-	var (
-		domains      []string
-		excludeHosts []string
-		dirtyOnly    bool
-		noRemote     bool
-		protocol     string
-		staleDays    int
-		fullStats    bool
-		format       string
-		plain        bool
-		watch        bool
-		concurrency  int
-		roots        []string
-	)
-
-	c := &cobra.Command{
+	return &cobra.Command{
 		Use:   "scan",
-		Short: "Discover repos and collect stats",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			merged := alias.Merge(cfg.Aliases)
-			if len(domains) > 0 {
-				domains = merged.ResolveMany(domains)
-			}
-			if len(excludeHosts) > 0 {
-				excludeHosts = merged.ResolveMany(excludeHosts)
-			}
-			if concurrency <= 0 {
-				concurrency = cfg.Scan.Concurrency
-			}
-
-			rootsOpt := cfg.Roots
-			if len(roots) > 0 {
-				rootsOpt = nil
-				for _, r := range roots {
-					rootsOpt = append(rootsOpt, config.Root{Path: r, Depth: config.DefaultDepth})
-				}
-			}
-			if len(rootsOpt) == 0 {
-				return fmt.Errorf("no roots configured — run `gitscan root add <path>` first or pass --root")
-			}
-
-			opts := scan.Options{
-				Roots:       rootsOpt,
-				Exclude:     cfg.Scan.ExcludePatterns,
-				Concurrency: concurrency,
-				FullStats:   fullStats,
-				Aliases:     merged,
-				Filter: scan.Filter{
-					Domains:      domains,
-					ExcludeHosts: excludeHosts,
-					DirtyOnly:    dirtyOnly,
-					NoRemote:     noRemote,
-					Protocol:     protocol,
-					StaleDays:    staleDays,
-				},
-			}
-
-			ctx := context.Background()
-			results, cancel := scan.Run(ctx, opts)
-			defer cancel()
-
-			f := ui.Format(format)
-			useColor := !plain && cfg.Output.Color && term.IsTerminal(int(os.Stdout.Fd()))
-			live := !plain && (watch || (term.IsTerminal(int(os.Stdout.Fd())) && f == ui.FormatTable))
-
-			if f == ui.FormatJSON || f == ui.FormatCSV || f == ui.FormatMarkdown {
-				live = false
-			}
-
-			if live {
-				return ui.RunTUI(results, cancel)
-			}
-
-			r := ui.New(f, useColor)
-			r.Header(os.Stdout)
-			total := 0
-			for res := range results {
-				r.Row(os.Stdout, res)
-				total++
-			}
-			r.Footer(os.Stdout, total)
-			return nil
-		},
+		Short: "Discover repos and collect stats (same as bare `gitscan`)",
+		RunE:  runScan,
 	}
-	c.Flags().StringSliceVarP(&domains, "domain", "d", nil,
-		"filter by domain alias or host (comma-separated, repeatable)")
-	c.Flags().StringSliceVar(&excludeHosts, "exclude-domain", nil,
-		"exclude domains by alias or host")
-	c.Flags().BoolVar(&dirtyOnly, "dirty-only", false, "show only repos with uncommitted changes")
-	c.Flags().BoolVar(&noRemote, "no-remote", false, "show only repos with no configured origin")
-	c.Flags().StringVar(&protocol, "protocol", "", "filter by remote protocol (ssh|https)")
-	c.Flags().IntVar(&staleDays, "stale", 0, "show only repos with no commit in the last N days")
-	c.Flags().BoolVar(&fullStats, "full-stats", false, "collect git plumbing stats (slower)")
-	c.Flags().StringVarP(&format, "format", "f", "", "output format: table|json|csv|markdown (default table)")
-	c.Flags().BoolVar(&plain, "plain", false, "force static output (no TUI)")
-	c.Flags().BoolVar(&watch, "watch", false, "force live TUI output even when piped")
-	c.Flags().IntVarP(&concurrency, "concurrency", "j", 0, "worker pool size (default from config)")
-	c.Flags().StringSliceVar(&roots, "root", nil, "scan this root (repeatable; overrides config roots)")
-	return c
 }
 
 // ---------- root add/remove/list ----------
@@ -177,7 +279,7 @@ func newRootAddCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().IntVarP(&depth, "depth", "d", config.DefaultDepth, "max scan depth for this root")
+	c.Flags().IntVar(&depth, "depth", config.DefaultDepth, "max scan depth for this root")
 	return c
 }
 

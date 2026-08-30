@@ -1,5 +1,10 @@
 // Package ui (TUI): a Bubble Tea live-updating model for `gitscan scan`
 // when stdout is a TTY (see decisions/2026-08-13-bubble-tea-default-ux.md).
+//
+// The TUI renders inline (no alt-screen) so the scan progress and final state
+// stay in the scrollback. The caller renders the final output through the
+// same static renderer used for --plain, ensuring the two paths produce
+// identical output.
 package ui
 
 import (
@@ -21,35 +26,40 @@ type tuiModel struct {
 	cancel   context.CancelFunc
 	rows     []scan.Result
 	total    int
+	width    int
+	height   int
 	spinner  spinnerState
 	quitting bool
 }
 
 type spinnerState struct {
-	frame int
+	frame  int
 	frames []string
 }
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 type tickMsg struct{}
+
 type resultMsg struct {
-	r scan.Result
+	r    scan.Result
 	done bool
 }
 
 // RunTUI starts the Bubble Tea program and blocks until it finishes. It
-// consumes from results; when the channel is closed it renders the final
-// table and exits.
-func RunTUI(results <-chan scan.Result, cancel context.CancelFunc) error {
+// consumes from results and returns the collected rows so the caller can
+// render the final output through the same renderer used for --plain.
+func RunTUI(results <-chan scan.Result, cancel context.CancelFunc) ([]scan.Result, error) {
 	m := &tuiModel{
 		results: results,
 		cancel:  cancel,
 		spinner: spinnerState{frames: spinnerFrames},
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+	p := tea.NewProgram(m)
+	if _, err := p.Run(); err != nil {
+		return nil, err
+	}
+	return m.rows, nil
 }
 
 func (m *tuiModel) Init() tea.Cmd {
@@ -74,6 +84,9 @@ func (m *tuiModel) spin() tea.Cmd {
 
 func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
@@ -98,34 +111,28 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *tuiModel) View() string {
 	if m.quitting {
-		return m.finalView()
+		return ""
 	}
 	var b strings.Builder
 	spin := m.spinner.frames[m.spinner.frame]
 	b.WriteString(fmt.Sprintf("%s scanning... %d repos found\n\n", spin, m.total))
-	if len(m.rows) > 10 {
-		for _, r := range m.rows[len(m.rows)-10:] {
-			b.WriteString(renderRowLive(r))
-			b.WriteString("\n")
-		}
-	} else {
-		for _, r := range m.rows {
-			b.WriteString(renderRowLive(r))
-			b.WriteString("\n")
-		}
+	rows := m.rows
+	maxRows := m.height - 5
+	if maxRows < 1 {
+		maxRows = 1
 	}
-	b.WriteString("\n" + lipgloss.NewStyle().Faint(true).Render("press q to quit"))
+	if len(rows) > maxRows {
+		rows = rows[len(rows)-maxRows:]
+	}
+	for _, r := range rows {
+		b.WriteString(renderRowLive(r, m.width))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n" + lipgloss.NewStyle().Faint(true).Render("press q to cancel"))
 	return b.String()
 }
 
-func (m *tuiModel) finalView() string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("gitscan — %d repos\n\n", m.total))
-	b.WriteString(renderTable(m.rows))
-	return b.String()
-}
-
-func renderRowLive(r scan.Result) string {
+func renderRowLive(r scan.Result, width int) string {
 	st := r.Stat
 	state := "ok"
 	if st.Dirty {
@@ -133,25 +140,31 @@ func renderRowLive(r scan.Result) string {
 	} else if st.OriginURL == "" {
 		state = "no-remote"
 	}
-	return fmt.Sprintf("%s\t%s\t%s\t%s",
-		shortPath(st.Path), st.Host, trimURL(st.OriginURL), state)
+	values := []string{shortPath(st.Path), st.Host, trimURL(st.OriginURL), state}
+	widths := []int{24, 16, 32, 12}
+	if width <= 0 {
+		width = 80
+	}
+	for i := range widths {
+		values[i] = fitCell(values[i], widths[i])
+	}
+	line := strings.Join(values, "  ")
+	return fitCell(line, width)
 }
 
-func renderTable(rows []scan.Result) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-		"PATH", "HOST", "ORIGIN", "BR", "CM", "OBJ", "SIZE", "STATE"))
-	for _, r := range rows {
-		st := r.Stat
-		state := "ok"
-		if st.Dirty {
-			state = "dirty"
-		} else if st.OriginURL == "" {
-			state = "no-remote"
-		}
-		b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			shortPath(st.Path), st.Host, trimURL(st.OriginURL),
-			st.Branches, st.Commits, st.Objects, humanSize(st.DotGitSize), state))
+func fitCell(value string, width int) string {
+	if width <= 0 {
+		return ""
 	}
-	return b.String()
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+	runes := []rune(value)
+	if len(runes) > width-1 {
+		runes = runes[:width-1]
+	}
+	return string(runes) + "…"
 }
