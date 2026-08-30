@@ -26,17 +26,17 @@ type Filter struct {
 	DirtyOnly    bool
 	NoRemote     bool
 	Protocol     string // ssh | https | "" (any)
-	StaleDays    int     // >0 => only repos with no commit in the last N days
+	StaleDays    int    // >0 => only repos with no commit in the last N days
 }
 
 // Options controls a scan run.
 type Options struct {
-	Roots        []config.Root
-	Exclude      []string
-	Concurrency  int
-	FullStats    bool
-	Filter       Filter
-	Aliases      alias.Map
+	Roots       []config.Root
+	Exclude     []string
+	Concurrency int
+	FullStats   bool
+	Filter      Filter
+	Aliases     alias.Map
 }
 
 // Result is what streams out of Run for each discovered repo.

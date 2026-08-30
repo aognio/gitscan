@@ -6,12 +6,14 @@ concurrently. This document is the contract for working in this repo.
 
 ## Project facts
 
-- **Module:** `github.com/aognio/gitscan` (MIT licensed)
+- **Module:** `github.com/aognio/gitscan` (MIT licensed). CLI entrypoint at
+  `cmd/gitscan/`; reusable packages under `internal/`.
 - **Toolchain:** Go 1.24+ (the `go.mod` toolchain line is authoritative)
 - **Runtime dep:** the real `git` binary on `PATH` (for `--full-stats` plumbing)
 - **Config path:** `$HOME/.gitscan/gitscan.toml` (created lazily on first
   `gitscan root add`). Usable with **zero config** thanks to compiled-in
   `github`/`gitlab` domain aliases.
+- **Install:** `go install github.com/aognio/gitscan/cmd/gitscan@latest`
 
 ## Architecture (in one screen)
 
@@ -24,7 +26,7 @@ internal/
 ├── gitio/gitio.go            # hybrid access: ReadRemotes(.git/config), DotGitSize, CollectFast/CollectFull
 ├── scan/scan.go              # discover(.git dirs) + bounded worker pool → results stream over a channel
 └── ui/
-    ├── ui.go                 # static renderers: table (Lip Gloss), JSON, CSV, markdown
+    ├── ui.go                 # static renderers: markdown table (Glamour), JSON, CSV, raw markdown
     └── tui.go                # Bubble Tea live view (TTY-aware default)
 ```
 
@@ -38,41 +40,45 @@ internal/
 - **Built-in domain aliases compiled into the binary** (`github`, `gitlab`)
   so the tool is useful immediately after `go install` with no config file.
 - **Charmbracelet UI stack** — Lip Gloss (styling), Bubble Tea (live TUI),
-  Bubbles (components), Glamour (markdown rendering).
+  Bubbles (components), Glamour (markdown rendering, used for the default table
+  format).
 - **TTY-aware default UX** — live Bubble Tea view when stdout is a TTY, static
   rendered output when piped; `--plain` forces static, `--watch` forces live.
   The worker pool always streams results over a channel; the TUI and static
   renderers are two consumers of the same stream.
+- **Markdown-as-table** — the default `table` format builds a markdown table
+  and renders it through Glamour (Unicode borders, aligned columns) when
+  stdout is a TTY; when piped, the raw markdown table is emitted, which stays
+  readable in any plaintext context. `--format markdown` always emits raw
+  markdown (no Glamour).
 
 ## Essential commands
 
 ```bash
-# Build the binary into the repo root
-go build -o gitscan .
+# Build the binary into ./bin/
+make build
 
 # Run all tests (none yet — when added, use this)
-go test ./...
+make test
 
-# Vet
-go vet ./...
-
-# Format (prefer gofumpt; fall back to goimports / gofmt)
-gofumpt -w .
+# Vet + format
+make vet
+make fmt        # gofumpt if available, falls back to gofmt
 
 # Smoke test against a real tree of Git repos
-./gitscan scan --plain --root ~/code
-./gitscan scan --plain --root ~/code --full-stats --dirty-only
-./gitscan scan --plain --root ~/code --domain github --format json
+gitscan scan --plain --root ~/code
+gitscan scan --plain --root ~/code --full-stats --dirty-only
+gitscan scan --plain --root ~/code --domain github --format json
 
 # Subcommands
-./gitscan root add ~/code --depth 4
-./gitscan root list
-./gitscan alias list
-./gitscan config show
+gitscan root add ~/code --depth 4
+gitscan root list
+gitscan alias list
+gitscan config show
 ```
 
-**Always run `go build ./...` and `go vet ./...` before declaring a task
-complete.** If a lint/format command was provided to you, run it too.
+**Always run `make build` and `make vet` before declaring a task complete.**
+Run `make fmt` too if a formatter is available.
 
 ## Workflow rules
 

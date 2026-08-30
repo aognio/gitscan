@@ -36,10 +36,10 @@ type Output struct {
 
 // Config is the full gitscan config file model.
 type Config struct {
-	Scan   Scan             `toml:"scan,omitempty"`
-	Roots  []Root           `toml:"roots,omitempty"`
+	Scan    Scan              `toml:"scan,omitempty"`
+	Roots   []Root            `toml:"roots,omitempty"`
 	Aliases map[string]string `toml:"aliases,omitempty"`
-	Output Output           `toml:"output,omitempty"`
+	Output  Output            `toml:"output,omitempty"`
 }
 
 // Defaults applied when values are unset / file missing.
@@ -82,7 +82,10 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			c := &Config{Scan: DefaultScan()}
+			c := &Config{
+				Scan:   DefaultScan(),
+				Output: Output{Format: DefaultFormat, Color: true},
+			}
 			return c, nil
 		}
 		return nil, fmt.Errorf("read config %s: %w", p, err)
