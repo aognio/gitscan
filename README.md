@@ -107,13 +107,13 @@ devnotes):
 ```text
 $ gitscan --plain ~/code
 | # | Path | Host | Origin | .git size | State |
-|---:|---|---|---|---:|---|
-| 1 | .../code/gitscan |  | — | 25.6KB | no-remote |
-| 2 | .../code/interdim | gitea.com | gitea.com/gnrfan/interdim | 95.6KB | ok |
-| 3 | .../code/mmvault | gitea.com | gitea.com/gnrfan/mmvault | 48.4KB | ok |
-| 4 | .../code/kangoo | github.com | github.com/aognio/kangoo | 444.0KB | ok |
-| 5 | .../code/consolehub | github.com | github.com/aognio/consolehub | 18.2MB | ok |
-| 6 | .../code/webcrush | gitea.com | gitea.com/webcrush | 38.1MB | ok |
+|---:|---|---:|---|---:|:---:|
+| 1 | .../code/gitscan |  | — | 25.6 KB | no-remote |
+| 2 | .../code/interdim | gitea.com | gitea.com/gnrfan/interdim | 95.6 KB | ok |
+| 3 | .../code/mmvault | gitea.com | gitea.com/gnrfan/mmvault | 48.4 KB | ok |
+| 4 | .../code/kangoo | github.com | github.com/aognio/kangoo | 444.0 KB | ok |
+| 5 | .../code/consolehub | github.com | github.com/aognio/consolehub | 18.2 MB | ok |
+| 6 | .../code/webcrush | gitea.com | gitea.com/webcrush | 38.1 MB | ok |
 
 **Total: 6 repos**
 
@@ -130,7 +130,7 @@ work:
 ```text
 $ gitscan --plain ~/code --full-stats --dirty-only
 | # | Path | Host | Origin | Branches | Commits | Objects | .git size | State |
-|---:|---|---|---|---:|---:|---:|---:|---|
+|---:|---|---:|---|---:|---:|---:|---:|:---:|
 | 1 | .../code/gitscan |  | — | 0 | 0 | 0 | 25.6KB | dirty(8) |
 | 2 | .../code/mmvault | gitea.com | gitea.com/gnrfan/mmvault | 1 | 1 | 36 | 48.4KB | dirty(14) |
 | 3 | .../code/fsasap-mcp |  | — | 1 | 11 | 152 | 235.3KB | dirty(3) |

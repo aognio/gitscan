@@ -258,9 +258,13 @@ func pagerLines(rows []scan.Result, fullStats bool) []string {
 		values = append(values, rowValues)
 	}
 	widths := pagerColumnWidths(values)
-	lines := []string{pagerTableLine(values[0], widths), pagerTableLine(pagerDividers(widths), widths)}
+	alignments := pagerAlignments(fullStats)
+	lines := []string{
+		pagerTableLine(values[0], widths, alignments),
+		pagerTableLine(pagerDividers(widths), widths, alignments),
+	}
 	for _, row := range values[1:] {
-		lines = append(lines, pagerTableLine(row, widths))
+		lines = append(lines, pagerTableLine(row, widths, alignments))
 	}
 	lines = append(lines, "", fmt.Sprintf("Total: %d repos", len(rows)))
 	return lines
@@ -308,16 +312,22 @@ func pagerDividers(widths []int) []string {
 	return dividers
 }
 
-func pagerTableLine(values []string, widths []int) string {
+func pagerTableLine(values []string, widths []int, alignments []tableAlignment) string {
 	parts := make([]string, len(widths))
 	for i, width := range widths {
-		parts[i] = padCell(values[i], width)
+		parts[i] = alignCell(values[i], width, alignments[i])
 	}
 	return strings.Join(parts, " │ ")
 }
 
-func padCell(value string, width int) string {
-	return value + strings.Repeat(" ", width-lipgloss.Width(value))
+func pagerAlignments(fullStats bool) []tableAlignment {
+	if fullStats {
+		return []tableAlignment{
+			alignRight, alignLeft, alignRight, alignLeft,
+			alignRight, alignRight, alignRight, alignRight, alignCenter,
+		}
+	}
+	return []tableAlignment{alignRight, alignLeft, alignRight, alignLeft, alignRight, alignCenter}
 }
 
 func clipText(value string, offset, width int) string {

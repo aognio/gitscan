@@ -58,3 +58,18 @@ func TestPagerVerticalMovementClampsToContent(t *testing.T) {
 		t.Fatalf("vertical offset = %d, want 0 for short content", model.verticalOffset)
 	}
 }
+
+func TestTableAlignment(t *testing.T) {
+	if got, want := alignCell("github.com", 14, alignRight), "    github.com"; got != want {
+		t.Fatalf("right-aligned host = %q, want %q", got, want)
+	}
+	if got, want := alignCell("ok", 8, alignCenter), "   ok   "; got != want {
+		t.Fatalf("center-aligned state = %q, want %q", got, want)
+	}
+}
+
+func TestHumanSizeSeparatesUnit(t *testing.T) {
+	if got, want := humanSize(1536), "1.5 KB"; got != want {
+		t.Fatalf("human size = %q, want %q", got, want)
+	}
+}

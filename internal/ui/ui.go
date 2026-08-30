@@ -20,6 +20,7 @@ import (
 
 	"github.com/aognio/gitscan/internal/scan"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Format is the output format identifier.
@@ -31,6 +32,30 @@ const (
 	FormatCSV      Format = "csv"
 	FormatMarkdown Format = "markdown"
 )
+
+type tableAlignment uint8
+
+const (
+	alignLeft tableAlignment = iota
+	alignRight
+	alignCenter
+)
+
+func alignCell(value string, width int, alignment tableAlignment) string {
+	padding := width - lipgloss.Width(value)
+	if padding <= 0 {
+		return value
+	}
+	switch alignment {
+	case alignRight:
+		return strings.Repeat(" ", padding) + value
+	case alignCenter:
+		left := padding / 2
+		return strings.Repeat(" ", left) + value + strings.Repeat(" ", padding-left)
+	default:
+		return value + strings.Repeat(" ", padding)
+	}
+}
 
 // Renderer is anything that can write a stream of scan.Results to a writer.
 type Renderer interface {
@@ -133,10 +158,10 @@ func (g *glamourTableRenderer) buildMarkdown() string {
 	var b strings.Builder
 	if g.fullStats {
 		b.WriteString("| # | Path | Host | Origin | Branches | Commits | Objects | .git size | State |\n")
-		b.WriteString("|---:|---|---|---|---:|---:|---:|---:|---|\n")
+		b.WriteString("|---:|---|---:|---|---:|---:|---:|---:|:---:|\n")
 	} else {
 		b.WriteString("| # | Path | Host | Origin | .git size | State |\n")
-		b.WriteString("|---:|---|---|---|---:|---|\n")
+		b.WriteString("|---:|---|---:|---|---:|:---:|\n")
 	}
 	for i, r := range g.rows {
 		st := r.Stat
@@ -245,7 +270,7 @@ type markdownRenderer struct {
 }
 
 func (m *markdownRenderer) Header(w io.Writer) {
-	md := "| Path | Host | Origin | Branches | Commits | Objects | .git size | State |\n|---|---|---|---:|---:|---:|---:|---|\n"
+	md := "| Path | Host | Origin | Branches | Commits | Objects | .git size | State |\n|---|---:|---|---:|---:|---:|---:|:---:|\n"
 	_, _ = w.Write([]byte(md))
 }
 
@@ -311,12 +336,12 @@ func trimURL(u string) string {
 func humanSize(n int64) string {
 	const unit = 1024
 	if n < unit {
-		return fmt.Sprintf("%dB", n)
+		return fmt.Sprintf("%d B", n)
 	}
 	div, exp := int64(unit), 0
 	for nn := n / unit; nn >= unit; nn /= unit {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.1f%cB", float64(n)/float64(div), "KMGTPE"[exp])
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
