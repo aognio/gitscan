@@ -89,7 +89,7 @@ type scanFlags struct {
 	plain        bool
 	raw          bool
 	watch        bool
-	browse       bool
+	pager        bool
 	concurrency  int
 	roots        []string
 }
@@ -111,7 +111,7 @@ func addScanFlags(cmd *cobra.Command) {
 	pf.BoolVar(&shared.plain, "plain", false, "force static output (no TUI)")
 	pf.BoolVar(&shared.raw, "raw", false, "emit raw markdown table (no Glamour rendering)")
 	pf.BoolVar(&shared.watch, "watch", false, "force live TUI output even when piped")
-	pf.BoolVar(&shared.browse, "browse", false, "browse scan results interactively after completion")
+	pf.BoolVarP(&shared.pager, "pager", "p", false, "page complete table results interactively after completion")
 	pf.IntVarP(&shared.concurrency, "concurrency", "j", 0, "worker pool size (default from config)")
 	pf.StringSliceVar(&shared.roots, "root", nil, "scan this root (repeatable; overrides config roots)")
 }
@@ -189,12 +189,16 @@ func runScan(cmd *cobra.Command, args []string) error {
 		f = ui.FormatTable
 	}
 	tty := term.IsTerminal(int(os.Stdout.Fd()))
+	terminalWidth := 0
+	if tty {
+		terminalWidth, _, _ = term.GetSize(int(os.Stdout.Fd()))
+	}
 	useGlamour := !shared.raw && tty
 	live := !shared.plain && (shared.watch || (tty && f == ui.FormatTable))
-	if shared.browse && f != ui.FormatTable {
-		return fmt.Errorf("--browse requires --format table")
+	if shared.pager && f != ui.FormatTable {
+		return fmt.Errorf("--pager requires --format table")
 	}
-	if shared.browse {
+	if shared.pager {
 		live = true
 	}
 
@@ -206,9 +210,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 		var r ui.Renderer
 		if f == ui.FormatTable {
 			if shared.fullStats {
-				r = ui.NewFullStatsTable(useGlamour)
+				r = ui.NewFullStatsTableWithWidth(useGlamour, terminalWidth)
 			} else {
-				r = ui.New(f, useGlamour)
+				r = ui.NewWithWidth(f, useGlamour, terminalWidth)
 			}
 		} else {
 			r = ui.New(f, useGlamour)
@@ -221,9 +225,12 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	if live {
-		rows, err := ui.RunTUI(results, cancel)
+		rows, err := ui.RunTUI(results, cancel, shared.pager, shared.fullStats)
 		if err != nil {
 			return err
+		}
+		if shared.pager {
+			return nil
 		}
 		renderFinal(rows)
 		return nil

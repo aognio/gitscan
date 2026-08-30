@@ -247,17 +247,17 @@ Press `q` to cancel the scan and exit. Pipe or redirect stdout and gitscan
 falls back to the static table automatically — use `--plain` to force static
 output in a TTY, or `--watch` to force the live view even when piped.
 
-Use `--browse` to open the completed results in a full-screen browser. It
-supports row selection, vertical paging, horizontal scrolling, and a detail
-area showing the complete path and origin URL:
+Use `-p`/`--pager` to open the completed results in a full-screen, `less`-style
+pager. It preserves the complete table as fixed-width lines and uses the
+terminal as a viewport for vertical and horizontal scrolling:
 
 ```text
-$ gitscan --browse ~/code
+$ gitscan --pager ~/code
 ```
 
-Use the arrow keys (or `h`/`j`/`k`/`l`) to navigate, `PageUp`/`PageDown` to
-move by a screen, and `q` to leave the browser. `--browse` is available only
-with the table format.
+Use the arrow keys (or `h`/`j`/`k`/`l`) to scroll, `PageUp`/`PageDown` or
+Space/`b` to move by a screen, `g`/`G` to jump to the beginning/end, and `q`
+to leave the pager. `--pager` is available only with the table format.
 
 ### Find stale repos
 
@@ -442,7 +442,7 @@ config file exists** — the tool works out of the box after `go install`.
 | `--plain` | Force static output (no TUI) |
 | `--raw` | Emit raw markdown table (no Glamour rendering) |
 | `--watch` | Force live TUI even when piped |
-| `--browse` | Browse completed table results interactively |
+| `-p`, `--pager` | Page complete table results interactively |
 | `--concurrency/-j <N>` | Worker pool size |
 | `--root <path>` | Scan this root (repeatable; overrides config) |
 

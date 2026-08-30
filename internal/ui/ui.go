@@ -3,6 +3,11 @@
 // The same Result stream produced by internal/scan is consumed by either:
 //   - the static renderers (Table, JSON, CSV, Markdown) for scripted output, or
 //   - the Bubble Tea live view (TUI) for interactive runs.
+//
+// The "table" format builds a markdown table from the results and renders it
+// through Glamour when stdout is a TTY (Unicode borders, aligned columns,
+// syntax highlighting) — falling back to the raw markdown table when piped,
+// which stays readable in any plaintext context (logs, PRs, devnotes).
 package ui
 
 import (
@@ -15,14 +20,6 @@ import (
 
 	"github.com/aognio/gitscan/internal/scan"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
-)
-
-var (
-	boldStyle  = lipgloss.NewStyle().Bold(true)
-	dirtyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	cleanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	headStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 )
 
 // Format is the output format identifier.
@@ -37,16 +34,20 @@ const (
 
 // Renderer is anything that can write a stream of scan.Results to a writer.
 type Renderer interface {
-	// Header is called once before results stream (may be a no-op).
 	Header(w io.Writer)
-	// Row is called once per result.
 	Row(w io.Writer, r scan.Result)
-	// Footer is called once after the last result.
 	Footer(w io.Writer, total int)
 }
 
 // New returns the right static Renderer for the requested format.
+// For FormatTable, the renderer buffers rows and emits a Glamour-rendered
+// markdown table in Footer (or the raw markdown when color is disabled).
 func New(f Format, useColor bool) Renderer {
+	return NewWithWidth(f, useColor, 0)
+}
+
+// NewWithWidth returns a renderer configured for a terminal width.
+func NewWithWidth(f Format, useColor bool, width int) Renderer {
 	switch f {
 	case FormatJSON:
 		return &jsonRenderer{}
@@ -55,65 +56,117 @@ func New(f Format, useColor bool) Renderer {
 	case FormatMarkdown:
 		return &markdownRenderer{}
 	default:
-		return &tableRenderer{color: useColor}
+		return &glamourTableRenderer{color: useColor, width: width, fullStats: false}
 	}
 }
 
-// ---- Table renderer ----
-
-type tableRenderer struct {
-	color bool
-	rows  [][]string
+// NewFullStatsTable returns a table renderer that includes the plumbing
+// columns (branches/commits/objects) — used when --full-stats is set.
+func NewFullStatsTable(useColor bool) Renderer {
+	return NewFullStatsTableWithWidth(useColor, 0)
 }
 
-func (t *tableRenderer) Header(w io.Writer) {
-	header := []string{"PATH", "HOST", "ORIGIN", "BR", "CM", "OBJ", "GIT-SIZE", "STATE"}
-	if t.color {
-		for i, h := range header {
-			header[i] = headStyle.Render(h)
-		}
-	}
-	fmt.Fprintln(w, strings.Join(header, "\t"))
+// NewFullStatsTableWithWidth returns a full-stats table renderer configured
+// for a terminal width.
+func NewFullStatsTableWithWidth(useColor bool, width int) Renderer {
+	return &glamourTableRenderer{color: useColor, width: width, fullStats: true}
 }
 
-func (t *tableRenderer) Row(w io.Writer, r scan.Result) {
-	st := r.Stat
-	state := "ok"
-	if st.Dirty {
-		state = "dirty(" + strconv.Itoa(st.DirtyCount) + ")"
-	} else if st.OriginURL == "" {
-		state = "no-remote"
-	}
-	row := []string{
-		shortPath(st.Path),
-		st.Host,
-		trimURL(st.OriginURL),
-		strconv.Itoa(st.Branches),
-		strconv.Itoa(st.Commits),
-		strconv.Itoa(st.Objects),
-		humanSize(st.DotGitSize),
-		state,
-	}
-	for i, cell := range row {
-		if t.color && i == len(row)-1 {
-			if st.Dirty {
-				row[i] = dirtyStyle.Render(cell)
-			} else if st.OriginURL == "" {
-				row[i] = cleanStyle.Render(cell)
+// ---- Glamour-rendered markdown table ----
+
+type glamourTableRenderer struct {
+	color     bool
+	fullStats bool
+	width     int
+	rows      []scan.Result
+}
+
+func (g *glamourTableRenderer) Header(w io.Writer) {}
+
+func (g *glamourTableRenderer) Row(w io.Writer, r scan.Result) {
+	g.rows = append(g.rows, r)
+}
+
+func (g *glamourTableRenderer) Footer(w io.Writer, total int) {
+	md := g.buildMarkdown()
+	if g.color {
+		var out string
+		var err error
+		if g.width > 0 {
+			renderer, rendererErr := glamour.NewTermRenderer(
+				glamour.WithAutoStyle(),
+				glamour.WithWordWrap(g.width),
+			)
+			if rendererErr == nil {
+				out, err = renderer.Render(md)
 			} else {
-				row[i] = cleanStyle.Render(cell)
+				err = rendererErr
 			}
+		} else {
+			out, err = glamour.Render(md, "auto")
+		}
+		if err == nil {
+			fmt.Fprint(w, out)
+			g.printSummary(w)
+			return
 		}
 	}
-	fmt.Fprintln(w, strings.Join(row, "\t"))
+	fmt.Fprintln(w, md)
+	g.printSummary(w)
 }
 
-func (t *tableRenderer) Footer(w io.Writer, total int) {
-	if t.color {
-		fmt.Fprintf(w, "\n%s\n", boldStyle.Render(fmt.Sprintf("%d repos", total)))
-	} else {
-		fmt.Fprintf(w, "\n%d repos\n", total)
+func (g *glamourTableRenderer) printSummary(w io.Writer) {
+	dirty, noremote := 0, 0
+	for _, r := range g.rows {
+		if r.Stat.Dirty {
+			dirty++
+		}
+		if r.Stat.OriginURL == "" {
+			noremote++
+		}
 	}
+	fmt.Fprintf(w, "\n%d repos | %d clean | %d dirty | %d no-remote\n",
+		len(g.rows), len(g.rows)-dirty, dirty, noremote)
+}
+
+func (g *glamourTableRenderer) buildMarkdown() string {
+	var b strings.Builder
+	if g.fullStats {
+		b.WriteString("| # | Path | Host | Origin | Branches | Commits | Objects | .git size | State |\n")
+		b.WriteString("|---:|---|---|---|---:|---:|---:|---:|---|\n")
+	} else {
+		b.WriteString("| # | Path | Host | Origin | .git size | State |\n")
+		b.WriteString("|---:|---|---|---|---:|---|\n")
+	}
+	for i, r := range g.rows {
+		st := r.Stat
+		state := "ok"
+		if st.Dirty {
+			state = fmt.Sprintf("dirty(%d)", st.DirtyCount)
+		} else if st.OriginURL == "" {
+			state = "no-remote"
+		}
+		path := shortPath(st.Path)
+		origin := trimURL(st.OriginURL)
+		if origin == "" {
+			origin = "—"
+		}
+		if host := st.Host; host == "" {
+			host = "—"
+		} else {
+			_ = host
+		}
+		if g.fullStats {
+			b.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %d | %d | %d | %s | %s |\n",
+				i+1, path, st.Host, origin,
+				st.Branches, st.Commits, st.Objects, humanSize(st.DotGitSize), state))
+		} else {
+			b.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %s | %s |\n",
+				i+1, path, st.Host, origin, humanSize(st.DotGitSize), state))
+		}
+	}
+	b.WriteString(fmt.Sprintf("\n**Total: %d repos**\n", len(g.rows)))
+	return b.String()
 }
 
 // ---- JSON renderer ----
