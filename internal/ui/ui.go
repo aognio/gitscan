@@ -146,8 +146,8 @@ func (g *glamourTableRenderer) buildMarkdown() string {
 		} else if st.OriginURL == "" {
 			state = "no-remote"
 		}
-		path := shortPath(st.Path)
-		origin := trimURL(st.OriginURL)
+		path := st.Path
+		origin := st.OriginURL
 		if origin == "" {
 			origin = "—"
 		}
