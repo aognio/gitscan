@@ -27,20 +27,22 @@ type Remote struct {
 
 // Stat is the per-repo data collected by a single pass.
 type Stat struct {
-	Path        string        `json:"path"`
-	Remotes     []Remote      `json:"remotes,omitempty"`
-	OriginURL   string        `json:"origin_url,omitempty"`
-	Host        string        `json:"host,omitempty"`
-	DotGitSize  int64         `json:"dotgit_size"`
-	DotGitFiles int           `json:"dotgit_files"`
-	Dirty       bool          `json:"dirty"`
-	DirtyCount  int           `json:"dirty_count,omitempty"`
-	Branches    int           `json:"branches,omitempty"`
-	Commits     int           `json:"commits,omitempty"`
-	Objects     int           `json:"objects,omitempty"`
-	LastCommit  time.Time     `json:"last_commit,omitempty"`
-	Error       string        `json:"error,omitempty"`
-	CollectedAt time.Time     `json:"collected_at"`
+	Path        string    `json:"path"`
+	Remotes     []Remote  `json:"remotes,omitempty"`
+	OriginURL   string    `json:"origin_url,omitempty"`
+	Host        string    `json:"host,omitempty"`
+	CodeSize    int64     `json:"code_size"`
+	CodeFiles   int       `json:"code_files"`
+	DotGitSize  int64     `json:"dotgit_size"`
+	DotGitFiles int       `json:"dotgit_files"`
+	Dirty       bool      `json:"dirty"`
+	DirtyCount  int       `json:"dirty_count,omitempty"`
+	Branches    int       `json:"branches,omitempty"`
+	Commits     int       `json:"commits,omitempty"`
+	Objects     int       `json:"objects,omitempty"`
+	LastCommit  time.Time `json:"last_commit,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	CollectedAt time.Time `json:"collected_at"`
 }
 
 // IsGitRepo reports whether dir contains a ".git" entry (directory or file,
@@ -189,6 +191,39 @@ func DotGitSize(repoDir string) (size int64, files int) {
 	return size, files
 }
 
+func repositorySizes(repoDir string) (codeSize int64, codeFiles int, dotGitSize int64, dotGitFiles int) {
+	root := filepath.Clean(repoDir)
+	gitRoot := filepath.Join(root, ".git")
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		inRootGit := path == gitRoot || strings.HasPrefix(path, gitRoot+string(filepath.Separator))
+		if inRootGit {
+			if entry.IsDir() {
+				return nil
+			}
+			dotGitSize += info.Size()
+			dotGitFiles++
+			return nil
+		}
+		if entry.IsDir() && entry.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		codeSize += info.Size()
+		codeFiles++
+		return nil
+	})
+	return codeSize, codeFiles, dotGitSize, dotGitFiles
+}
+
 // gitBinary returns the path to git, or an error if it isn't on PATH.
 func gitBinary() (string, error) {
 	return exec.LookPath("git")
@@ -222,9 +257,11 @@ func CollectFast(repoDir string) Stat {
 	st.Remotes = remotes
 	st.OriginURL = origin
 	st.Host = HostFromURL(origin)
-	size, files := DotGitSize(repoDir)
-	st.DotGitSize = size
-	st.DotGitFiles = files
+	codeSize, codeFiles, dotGitSize, dotGitFiles := repositorySizes(repoDir)
+	st.CodeSize = codeSize
+	st.CodeFiles = codeFiles
+	st.DotGitSize = dotGitSize
+	st.DotGitFiles = dotGitFiles
 	return st
 }
 

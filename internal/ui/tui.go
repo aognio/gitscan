@@ -266,15 +266,17 @@ func pagerLines(rows []scan.Result, fullStats bool) []string {
 	for _, row := range values[1:] {
 		lines = append(lines, pagerTableLine(row, widths, alignments))
 	}
-	lines = append(lines, "", fmt.Sprintf("Total: %d repos", len(rows)))
+	codeSize, dotGitSize := totalSizes(rows)
+	lines = append(lines, "", fmt.Sprintf("Total: %d repos | code: %s | .git: %s",
+		len(rows), humanSize(codeSize), humanSize(dotGitSize)))
 	return lines
 }
 
 func pagerHeaders(fullStats bool) []string {
 	if fullStats {
-		return []string{"#", "Path", "Host", "Origin", "Branches", "Commits", "Objects", ".git size", "State"}
+		return []string{"#", "Path", "Host", "Origin", "Branches", "Commits", "Objects", "Code size", ".git size", "State"}
 	}
-	return []string{"#", "Path", "Host", "Origin", ".git size", "State"}
+	return []string{"#", "Path", "Host", "Origin", "Code size", ".git size", "State"}
 }
 
 func pagerValues(row scan.Result, fullStats bool) []string {
@@ -289,7 +291,7 @@ func pagerValues(row scan.Result, fullStats bool) []string {
 	if fullStats {
 		values = append(values, strconv.Itoa(st.Branches), strconv.Itoa(st.Commits), strconv.Itoa(st.Objects))
 	}
-	return append(values, humanSize(st.DotGitSize), state)
+	return append(values, humanSize(st.CodeSize), humanSize(st.DotGitSize), state)
 }
 
 func pagerColumnWidths(rows [][]string) []int {
@@ -324,10 +326,10 @@ func pagerAlignments(fullStats bool) []tableAlignment {
 	if fullStats {
 		return []tableAlignment{
 			alignRight, alignLeft, alignRight, alignLeft,
-			alignRight, alignRight, alignRight, alignRight, alignCenter,
+			alignRight, alignRight, alignRight, alignRight, alignRight, alignCenter,
 		}
 	}
-	return []tableAlignment{alignRight, alignLeft, alignRight, alignLeft, alignRight, alignCenter}
+	return []tableAlignment{alignRight, alignLeft, alignRight, alignLeft, alignRight, alignRight, alignCenter}
 }
 
 func clipText(value string, offset, width int) string {

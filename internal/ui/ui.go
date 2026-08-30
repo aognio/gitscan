@@ -150,18 +150,19 @@ func (g *glamourTableRenderer) printSummary(w io.Writer) {
 			noremote++
 		}
 	}
-	fmt.Fprintf(w, "\n%d repos | %d clean | %d dirty | %d no-remote\n",
-		len(g.rows), len(g.rows)-dirty, dirty, noremote)
+	codeSize, dotGitSize := totalSizes(g.rows)
+	fmt.Fprintf(w, "\n%d repos | %d clean | %d dirty | %d no-remote | code %s | .git %s\n",
+		len(g.rows), len(g.rows)-dirty, dirty, noremote, humanSize(codeSize), humanSize(dotGitSize))
 }
 
 func (g *glamourTableRenderer) buildMarkdown() string {
 	var b strings.Builder
 	if g.fullStats {
-		b.WriteString("| # | Path | Host | Origin | Branches | Commits | Objects | .git size | State |\n")
-		b.WriteString("|---:|---|---:|---|---:|---:|---:|---:|:---:|\n")
+		b.WriteString("| # | Path | Host | Origin | Branches | Commits | Objects | Code size | .git size | State |\n")
+		b.WriteString("|---:|---|---:|---|---:|---:|---:|---:|---:|:---:|\n")
 	} else {
-		b.WriteString("| # | Path | Host | Origin | .git size | State |\n")
-		b.WriteString("|---:|---|---:|---|---:|:---:|\n")
+		b.WriteString("| # | Path | Host | Origin | Code size | .git size | State |\n")
+		b.WriteString("|---:|---|---:|---|---:|---:|:---:|\n")
 	}
 	for i, r := range g.rows {
 		st := r.Stat
@@ -182,15 +183,17 @@ func (g *glamourTableRenderer) buildMarkdown() string {
 			_ = host
 		}
 		if g.fullStats {
-			b.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %d | %d | %d | %s | %s |\n",
+			b.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %d | %d | %d | %s | %s | %s |\n",
 				i+1, path, st.Host, origin,
-				st.Branches, st.Commits, st.Objects, humanSize(st.DotGitSize), state))
+				st.Branches, st.Commits, st.Objects, humanSize(st.CodeSize), humanSize(st.DotGitSize), state))
 		} else {
-			b.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %s | %s |\n",
-				i+1, path, st.Host, origin, humanSize(st.DotGitSize), state))
+			b.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %s | %s | %s |\n",
+				i+1, path, st.Host, origin, humanSize(st.CodeSize), humanSize(st.DotGitSize), state))
 		}
 	}
-	b.WriteString(fmt.Sprintf("\n**Total: %d repos**\n", len(g.rows)))
+	codeSize, dotGitSize := totalSizes(g.rows)
+	b.WriteString(fmt.Sprintf("\n**Total: %d repos | code: %s | .git: %s**\n",
+		len(g.rows), humanSize(codeSize), humanSize(dotGitSize)))
 	return b.String()
 }
 
@@ -230,7 +233,7 @@ func (j *jsonRenderer) Footer(w io.Writer, total int) {
 
 type csvRenderer struct{}
 
-var csvHeader = []string{"path", "host", "origin_url", "branches", "commits", "objects", "dotgit_size", "dotgit_files", "dirty", "dirty_count", "last_commit"}
+var csvHeader = []string{"path", "host", "origin_url", "branches", "commits", "objects", "code_size", "code_files", "dotgit_size", "dotgit_files", "dirty", "dirty_count", "last_commit"}
 
 func (c *csvRenderer) Header(w io.Writer) {
 	cw := csv.NewWriter(w)
@@ -248,6 +251,8 @@ func (c *csvRenderer) Row(w io.Writer, r scan.Result) {
 		strconv.Itoa(st.Branches),
 		strconv.Itoa(st.Commits),
 		strconv.Itoa(st.Objects),
+		strconv.FormatInt(st.CodeSize, 10),
+		strconv.Itoa(st.CodeFiles),
 		strconv.FormatInt(st.DotGitSize, 10),
 		strconv.Itoa(st.DotGitFiles),
 		strconv.FormatBool(st.Dirty),
@@ -270,11 +275,12 @@ type markdownRenderer struct {
 }
 
 func (m *markdownRenderer) Header(w io.Writer) {
-	md := "| Path | Host | Origin | Branches | Commits | Objects | .git size | State |\n|---|---:|---|---:|---:|---:|---:|:---:|\n"
+	md := "| Path | Host | Origin | Branches | Commits | Objects | Code size | .git size | State |\n|---|---:|---|---:|---:|---:|---:|---:|:---:|\n"
 	_, _ = w.Write([]byte(md))
 }
 
 func (m *markdownRenderer) Row(w io.Writer, r scan.Result) {
+	m.rows = append(m.rows, r)
 	st := r.Stat
 	state := "ok"
 	if st.Dirty {
@@ -282,14 +288,16 @@ func (m *markdownRenderer) Row(w io.Writer, r scan.Result) {
 	} else if st.OriginURL == "" {
 		state = "no-remote"
 	}
-	row := fmt.Sprintf("| %s | %s | %s | %d | %d | %d | %s | %s |\n",
+	row := fmt.Sprintf("| %s | %s | %s | %d | %d | %d | %s | %s | %s |\n",
 		st.Path, st.Host, trimURL(st.OriginURL), st.Branches,
-		st.Commits, st.Objects, humanSize(st.DotGitSize), state)
+		st.Commits, st.Objects, humanSize(st.CodeSize), humanSize(st.DotGitSize), state)
 	_, _ = w.Write([]byte(row))
 }
 
 func (m *markdownRenderer) Footer(w io.Writer, total int) {
-	_, _ = w.Write([]byte(fmt.Sprintf("\n**Total: %d repos**\n", total)))
+	codeSize, dotGitSize := totalSizes(m.rows)
+	_, _ = w.Write([]byte(fmt.Sprintf("\n**Total: %d repos | code: %s | .git: %s**\n",
+		total, humanSize(codeSize), humanSize(dotGitSize))))
 }
 
 // RenderMarkdown renders a markdown string glamour-style to w. Used by the
@@ -344,4 +352,12 @@ func humanSize(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+func totalSizes(rows []scan.Result) (codeSize, dotGitSize int64) {
+	for _, row := range rows {
+		codeSize += row.Stat.CodeSize
+		dotGitSize += row.Stat.DotGitSize
+	}
+	return codeSize, dotGitSize
 }

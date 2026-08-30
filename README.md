@@ -96,10 +96,13 @@ gitscan alias list
 ### Default scan (fast mode)
 
 The default scan reads only the filesystem — it parses `.git/config` for
-remotes and walks `.git/` for size. No `git` binary is spawned, so it's fast
-even across hundreds of repos.
+remotes and walks each repository once for separate working-tree and `.git`
+sizes. Code size excludes the `.git` folder, so the two measurements never
+double-count Git metadata. No `git` binary is spawned, so it's fast even across
+hundreds of repos.
 
-When stdout is a TTY, the table is rendered through **Glamour** with Unicode
+Tables include `Code size` before `.git size`, and the summary reports the
+aggregate code and Git storage totals. When stdout is a TTY, the table is rendered through **Glamour** with Unicode
 borders, aligned columns, and syntax highlighting. When piped, the raw
 markdown table is emitted (readable in any plaintext context — logs, PRs,
 devnotes):
@@ -201,7 +204,7 @@ Each element is a full `Stat` object:
 
 ```text
 $ gitscan --plain ~/code --format csv
-path,host,origin_url,branches,commits,objects,dotgit_size,dotgit_files,dirty,dirty_count,last_commit
+path,host,origin_url,branches,commits,objects,code_size,code_files,dotgit_size,dotgit_files,dirty,dirty_count,last_commit
 /home/user/code/gitscan,,,0,0,0,26246,18,false,0,0001-01-01
 /home/user/code/interdim,gitea.com,https://gitea.com/gnrfan/interdim.git,0,0,0,97913,28,false,0,0001-01-01
 /home/user/code/mmvault,gitea.com,https://gitea.com/gnrfan/mmvault.git,0,0,0,49562,32,false,0,0001-01-01
